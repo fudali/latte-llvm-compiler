@@ -1,0 +1,10 @@
+int main() {
+  int x;
+  
+  {
+    int y;
+    printInt(x);
+    printInt(y);
+  }
+  printInt(y); // should throw an error here
+}
