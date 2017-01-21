@@ -49,10 +49,10 @@ run v ff p s = let ts = myLexer s in case p ts of
                 exitFailure
         Ok tree -> do
                 checkProgram tree                
-                {-template <- readFile "./lib/template.ll"-}
-                {-main <- compile tree-}
-                {-let program = replace "#PROGRAM#" main template-}
-                {-writeFile (makeNewName ff) program-}
+                template <- readFile "./lib/template.ll"
+                main <- compile tree
+                let program = replace "#PROGRAM#" main template
+                writeFile (makeNewName ff) program
                 exitSuccess
 
 

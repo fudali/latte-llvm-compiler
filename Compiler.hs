@@ -15,13 +15,13 @@ type Res a = StateT MyState IO a
 emptyState :: MyState
 emptyState = (0, [])
 
-{-compile :: Program -> IO String-}
-{-compile program = do-}
-        {-(program, _) <- runStateT (compileProgram program) emptyState-}
-        {-return program-}
+compile :: Program -> IO String
+compile program = do
+        (program, _) <- runStateT (compileProgram program) emptyState
+        return program
 
-{-compileProgram :: Program -> Res String-}
-{-compileProgram (Prog p) = compileP p-}
+compileProgram :: Program -> Res String
+compileProgram (Program topDefs) = compileP topDefs
 
 {-alloca :: String -> Res String-}
 {-alloca id = do-}
@@ -31,7 +31,34 @@ emptyState = (0, [])
                     {-put (nextNumber, reg:list)-}
                     {-return $ reg ++ " = alloca i32\n"-}
 
-{-compileP :: [Stmt] -> Res String-}
+compileP :: [TopDef] -> Res String
+compileP [] = return ""
+compileP (topDef:rest) = do
+        currCode <- cFunction topDef
+        restCode <- compileP rest
+        return $ currCode ++ restCode
+
+cFunction :: TopDef -> Res String
+cFunction (FnDef typ (Ident id) args block) = do
+        let argsCode = argsHelper args
+        blockCode <- cBlock block
+        typCode <- cType typ
+        return "define " ++ typCode ++ " @" ++ id ++ argsCode ++ blockCode 
+
+
+typeToCode :: Type -> String
+typeToCode Int = "i32"
+
+cBlock :: Block -> Res String
+cBlock b = return "this is block"
+
+argsHelper :: [Arg] -> Res String
+argsHelper [] = return ""
+argsHelper ((Arg typ (Ident id):rest) = do
+        let argCode = 
+        argsHelper rest
+
+
 {-compileP [] = return "ret i32 0\n"-}
 {-compileP ((Ass (Ident id) exp):rest) = do-}
         {-(expCode, val) <- compileExp exp-}
@@ -85,5 +112,4 @@ emptyState = (0, [])
 {-compileExp (ExpSub exp1 exp2) = compileExpOp exp1 exp2 "sub"-}
 {-compileExp (ExpMul exp1 exp2) = compileExpOp exp1 exp2 "mul"-}
 {-compileExp (ExpDiv exp1 exp2) = compileExpOp exp1 exp2 "sdiv"-}
-
 
