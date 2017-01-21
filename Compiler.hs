@@ -40,11 +40,10 @@ compileP (topDef:rest) = do
 
 cFunction :: TopDef -> Res String
 cFunction (FnDef typ (Ident id) args block) = do
-        let argsCode = argsHelper args
+        argsCode <- argsHelper args
         blockCode <- cBlock block
-        typCode <- cType typ
-        return "define " ++ typCode ++ " @" ++ id ++ argsCode ++ blockCode 
-
+        let typCode = typeToCode typ
+        return $ "define " ++ typCode ++ " @" ++ id ++ argsCode ++ blockCode 
 
 typeToCode :: Type -> String
 typeToCode Int = "i32"
@@ -54,10 +53,14 @@ cBlock b = return "this is block"
 
 argsHelper :: [Arg] -> Res String
 argsHelper [] = return ""
-argsHelper ((Arg typ (Ident id):rest) = do
-        let argCode = 
-        argsHelper rest
+argsHelper ((Arg typ (Ident id):[])) = do
+        let argCode = typeToCode typ ++ " %" ++ id
+        return argCode
 
+argsHelper ((Arg typ (Ident id)):rest) = do
+        let argCode = typeToCode typ ++ " %" ++ id
+        restCode <- argsHelper rest
+        return $ argCode ++ ", " ++ restCode
 
 {-compileP [] = return "ret i32 0\n"-}
 {-compileP ((Ass (Ident id) exp):rest) = do-}

@@ -35,7 +35,7 @@ runFile v p f = putStrLn f >> readFile f >>= run v f p
 makeNewName :: String -> String
 makeNewName name = do
         let parts = splitOn "/" name
-        let fileName = replace ".ins" ".ll" $ last parts
+        let fileName = replace ".lat" ".ll" $ last parts
         intercalate "/" $ (init parts) ++ [fileName]
 
 replace :: String -> String -> String -> String
@@ -49,10 +49,9 @@ run v ff p s = let ts = myLexer s in case p ts of
                 exitFailure
         Ok tree -> do
                 checkProgram tree                
-                template <- readFile "./lib/template.ll"
-                main <- compile tree
-                let program = replace "#PROGRAM#" main template
-                writeFile (makeNewName ff) program
+                theCode <- compile tree
+                writeFile (makeNewName ff) theCode
+                putStrLn $ "zapisalem plik " ++ makeNewName ff
                 exitSuccess
 
 
