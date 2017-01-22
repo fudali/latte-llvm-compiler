@@ -1,9 +1,7 @@
 all:
-	happy -gca ParLatte.y
-	alex -g LexLatte.x
-	ghc --make Latte.hs -o Latte
+	cd src && $(MAKE)
+	cp src/bash/insc_llvm .
 
 clean:
-	-rm -f *.log *.aux *.hi *.o *.dvi
-
-
+	cd src && $(MAKE) clean
+	rm insc_llvm

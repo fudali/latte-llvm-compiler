@@ -51,7 +51,7 @@ run v ff p s = let ts = myLexer s in case p ts of
                 checkProgram tree                
                 theCode <- compile tree
                 writeFile (makeNewName ff) theCode
-                putStrLn $ "zapisalem plik " ++ makeNewName ff
+                putStrLn $ "compiled && saved " ++ makeNewName ff
                 exitSuccess
 
 
