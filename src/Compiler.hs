@@ -7,14 +7,17 @@ import Control.Monad.State
 import Data.Maybe
 import System.IO
 
-data ExpValue = VInt Integer | VReg String
+data ExpValue = VInt Integer | VBool Bool | VReg String
 
-type MyState = (Int, [String])
+type LabelNumber = Int
+type RegNumber = Int
+type MyState = (RegNumber, LabelNumber, [String])
 type Res a = StateT MyState IO a
 type Code = String
+type Hand = String
 
 emptyState :: MyState
-emptyState = (0, [])
+emptyState = (0, 0, [])
 
 compile :: Program -> IO String
 compile program = do
@@ -24,6 +27,28 @@ compile program = do
 compileProgram :: Program -> Res String
 compileProgram (Program topDefs) = compileP topDefs
 
+--
+--
+regFromId :: String -> String
+regFromId id = "%loc_" ++ id
+
+genReg :: Res String
+genReg = do
+        (nextRegNr, nextLabelNr, list) <- get
+        let newReg = "%t" ++ show nextRegNr
+        put (nextRegNr + 1, nextLabelNr, newReg:list)
+        return newReg
+
+genLabel :: Res String
+genLabel = do
+        (nextRegNr, nextLabelNr, list) <- get
+        let newLabel = "label" ++ show nextLabelNr
+        put (nextRegNr, nextLabelNr + 1, list)
+        return newLabel
+
+labelToVar :: String -> String
+labelToVar label = "%" ++ label
+
 -- BEGINNING OF HELPERS SECTION --
 --
 --
@@ -31,21 +56,11 @@ compileProgram (Program topDefs) = compileP topDefs
 -- -------------------------------
 alloca :: String -> Res String
 alloca id = do
-        (nextNumber, list) <- get
+        (nextNumber, labelN, list) <- get
         let reg = regFromId id
         if (any (==reg) list) then return "" else do
-                    put (nextNumber, reg:list)
+                    put (nextNumber, labelN, reg:list)
                     return $ reg ++ " = alloca i32\n"
-
-regFromId :: String -> String
-regFromId id = "%loc_" ++ id
-
-genReg :: Res String
-genReg = do
-        (nextNumber, list) <- get
-        let newReg = "%t" ++ show nextNumber
-        put (nextNumber + 1, newReg:list)
-        return newReg
 
 declareArgs :: [Arg] -> Res String
 declareArgs [] = return ""
@@ -124,45 +139,75 @@ cStmt :: Stmt -> Res String
 cStmt Empty = do
         return ""
 
-cStmt (BStmt b) = do
-        cBlock b
+cStmt (BStmt (Block stmts)) = cStmts stmts
 
 cStmt (Decl typ items) = do
         code <- declareItems typ items
         return code
 
 cStmt (Ass (Ident id) exp) = do
-        (expCode, val) <- cExp exp
-        let assPartialCode = case val of
-                           (VInt int) -> show int
-                           (VReg reg) -> reg
-        return $ "store i32 " ++ assPartialCode ++ ", i32* " ++ (regFromId id) ++ "\n"
-        
+        (expCode, hand) <- cExp exp
+        return $ expCode ++ "store i32 " ++ hand ++ ", i32* " ++ (regFromId id) ++ "\n"
 
 cStmt (Incr (Ident id)) = do
         return "incr\n"
 
 cStmt (Decr (Ident id)) = do
-        return "decr\n"
+        let exp = (EAdd (EVar (Ident id)) Minus (ELitInt 1))
+        cStmt (Ass (Ident id) exp)
+        {-(loadCode, hand) <- cExp (EVar (Ident id))-}
+        {-(decrCode, _) <- cExp (EAdd (EVar (Ident id)) Minus (ELitInt 1))-}
+        {-return (loadCode ++ decrCode, hand)-}
+
+
+
+{-cExp (EVar (Ident id)) = do-}
+{-cExp (EAdd exp1 op exp2) = do-}
+
 
 cStmt (Ret exp) = do
-        (expCode, val) <- cExp exp
-        return $ "ret i32 0" ++ expCode
+        (expCode, hand) <- cExp exp
+        return $ expCode ++ "ret i32 " ++ hand ++ "\n"
 
 cStmt VRet = do
         return "ret void\n"
 
-cStmt (Cond exp stmt) = do
-        return "cond\n"
+cStmt (Cond exp stmt) = cStmt(CondElse exp stmt (Empty))
 
 cStmt (CondElse exp stTrue stFalse) = do
-        return "\n"
+        (expCode, hand) <- cExp exp
+        trueBranch <- cStmt stTrue
+        falseBranch <- cStmt stFalse
+        trueLabel <- genLabel
+        falseLabel <- genLabel
+        contLabel <- genLabel
+        ifReg <- genReg
+        let gotoCont = "br label %" ++ contLabel ++ "\n"
+        let cmpCode = ifReg ++ " = icmp eq i1 " ++ hand ++ ", 1\n"
+        let ifCode = "br i1 " ++ ifReg ++ ", label %" ++ trueLabel ++ ", label %" ++ falseLabel ++ "\n"
+        let truePart = "\n" ++ trueLabel ++ ":\n" ++ trueBranch ++ gotoCont
+        let falsePart = "\n" ++ falseLabel ++ ":\n" ++ falseBranch ++ gotoCont
+        let contPart = "\n" ++ contLabel ++ ":\n"
+        return $ expCode ++ cmpCode ++ ifCode ++ truePart ++ falsePart ++ contPart
+
 
 cStmt (While exp st) = do
-        return "while\n"
+        (expCode, hand) <- cExp exp
+        bodyCode <- cStmt st
+        expLabel <- genLabel
+        bodyLabel <- genLabel
+        contLabel <- genLabel
+        condReg <- genReg
+        let gotoExp = "br label %" ++ expLabel ++ "\n"
+        let bodyPart = "\n" ++ bodyLabel ++ ":\n" ++ bodyCode ++ gotoExp
+        let expPart = "\n" ++ expLabel ++ ":\n" ++ expCode
+        let cmpCode = condReg ++ " = icmp eq i1 " ++ hand ++ ", 1\n"
+        let brCode = "br i1 " ++ condReg ++ ", label %" ++ bodyLabel ++ ", label %" ++ contLabel ++ "\n"
+        let contPart = "\n" ++ contLabel ++ ":\n"
+        return $ expPart ++ cmpCode ++ brCode ++ bodyPart ++ contPart
 
 cStmt (SExp exp) = do
-        (expCode, val) <- cExp exp
+        (expCode, _) <- cExp exp
         return expCode
 
 -- EXPS HELPERS
@@ -181,56 +226,68 @@ applyExps (exp:rest) = do
 
 applyExp :: Expr -> Res (Code, String)
 applyExp exp = do
-        (expCode, val) <- cExp exp
-        let reference = case val of
-                      (VInt int) -> show int
-                      (VReg reg) -> reg
-        return (expCode, "i32 " ++ reference)
+        (expCode, hand) <- cExp exp
+        return (expCode, "i32 " ++ hand)
+
+relOpToCode :: RelOp -> String
+relOpToCode LTH = "slt"
+relOpToCode LE = "sle"
+relOpToCode GTH = "sgt"
+relOpToCode GE = "sge"
+relOpToCode EQU = "eq"
+relOpToCode NE = "ne"
 
 -- EXP
 --
 -- ----------------------
 
-cExp :: Expr -> Res (String, ExpValue)
+cExp :: Expr -> Res (String, Hand)
 cExp (EVar (Ident id)) = do
         newReg <- genReg
-        return (newReg ++ " = load i32, i32* " ++ regFromId id ++ "\n", VReg newReg)
-
-cExp (ELitInt int) = do
-        return ("\n", VInt int)
+        return (newReg ++ " = load i32, i32* " ++ regFromId id ++ "\n", newReg)
 
 cExp ELitTrue = do
-        return ("true\n", VInt 1)
+        return ("", "1")
 
 cExp ELitFalse = do
-        return ("false\n", VInt 0)
+        return ("", "0")
+
+cExp (ELitInt int) = do
+        return ("", show int)
+
+cExp (EString str) = do
+        return ("str\n", show 996)
+
+cExp (Neg exp) = do
+        (expCode, hand) <- cExp exp
+        reg <- genReg
+        return (expCode ++ reg ++ " = sub i32 0, " ++ hand ++ "\n", reg)
+
+cExp (Not exp) = do
+        return ("!not\n", "reg")
+
+cExp (EMul exp1 op exp2) = do
+        return ("mul*\n", "reg")
+
+cExp (EAdd exp1 op exp2) = do
+        (expCode1, hand1) <- cExp exp1
+        (expCode2, hand2) <- cExp exp2
+        reg <- genReg
+        return (expCode1 ++ expCode2 ++ reg ++ " = add i32 " ++ hand1 ++ ", " ++ hand2 ++ "\n", reg)
+
+cExp (ERel exp1 op exp2) = do
+        (expCode1, hand1) <- cExp exp1
+        (expCode2, hand2) <- cExp exp2
+        reg <- genReg
+        return (expCode1 ++ expCode2 ++ reg ++ " = icmp " ++ relOpToCode op ++ " i32 " ++ hand1 ++ ", " ++ hand2 ++ "\n", reg)
+
+cExp (EAnd exp1 exp2) = do
+        return ("and&&\n", "reg")
+
+cExp (EOr exp1 exp2) = do
+        return ("or||\n", "reg")
 
 cExp (EApp (Ident id) exps) = do
         (argsCode, args) <- applyExps exps 
-        return (argsCode ++ "call void @" ++ id ++ "(" ++ args ++ ")\n", VInt 0)
-
-cExp (EString str) = do
-        return ("str\n", VInt 996)
-
-cExp (Neg exp) = do
-        return ("-neg\n", VReg "reg")
-
-cExp (Not exp) = do
-        return ("!not\n", VReg "reg")
-
-cExp (EMul exp1 op exp2) = do
-        return ("mul*\n", VReg "reg")
-
-cExp (EAdd exp1 op exp2) = do
-        return ("add+\n", VReg "reg")
-
-cExp (ERel exp1 op exp2) = do
-        return ("rel<>\n", VReg "reg")
-
-cExp (EAnd exp1 exp2) = do
-        return ("and&&\n", VReg "reg")
-
-cExp (EOr exp1 exp2) = do
-        return ("or||\n", VReg "reg")
-
+        return (argsCode ++ "call void @" ++ id ++ "(" ++ args ++ ")\n", "0")
 
