@@ -1,7 +1,0 @@
-#!/bin/bash
-./src/Latte $1
-DIR=$(dirname $1)
-CREATED="${1%.*}.ll"
-BYTECODE="${1%.*}.bc"
-llvm-as -o $BYTECODE $CREATED
-llvm-link -o $BYTECODE $BYTECODE lib/runtime.bc

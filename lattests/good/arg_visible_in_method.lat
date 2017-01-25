@@ -1,0 +1,19 @@
+int main() {
+        int a = 1;
+        int b = 2;
+        printInt(a);
+        printInt(b);
+        foo(a);
+        printInt(a);
+        printInt(b);
+        foo(b);
+        printInt(a);
+        printInt(b);
+        return 0;
+}
+
+void foo(int a) {
+        printInt(a);
+        a = 10;
+        printInt(a);
+}

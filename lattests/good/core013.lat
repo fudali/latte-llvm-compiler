@@ -15,14 +15,13 @@ int main() {
   printBool(true);
   printBool(false);
   return 0 ;
-
 }
 
 void printBool(boolean b) {
   if (!b) {
-    printString("false");
+    printInt(0);
   } else {
-    printString("true");
+    printInt(1);
  }
  return;
 }

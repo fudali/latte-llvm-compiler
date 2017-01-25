@@ -1,8 +1,7 @@
 /* allow comparing booleans. */
 
 int main() {
-  while (true == true) {
-    printInt(1);
-  }
-  return 0;
+  if (true == true) { printInt(42); }
+  return 0 ;
+
 }

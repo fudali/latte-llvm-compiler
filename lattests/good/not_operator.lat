@@ -1,0 +1,17 @@
+int main() {
+  boolean x = false;
+  if (x) {
+    printInt(1);
+  } else {
+    printInt(2);
+  }
+
+  x = !x;
+  if (x) {
+    printInt(11);
+  } else {
+    printInt(12);
+  }
+  return 0;
+}
+  

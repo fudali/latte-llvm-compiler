@@ -1,0 +1,12 @@
+int main() {
+        int a = 1;
+        foo(a);
+        printInt(a);
+        return 0;
+}
+
+void foo(int a) {
+        printInt(a);
+        int a = 10;
+        printInt(a);
+}
