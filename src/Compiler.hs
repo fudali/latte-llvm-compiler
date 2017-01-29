@@ -17,15 +17,19 @@ type Var = String
 type FunName = String
 type Loc = Int
 type VarEnv = M.Map Var (Type, Loc)
+type RegEnv = M.Map String String
 type FunEnv = M.Map FunName (Type, [Type])
 type StringId = Int
-type StringMap = M.Map StringId String
+type StringMap = M.Map String StringId
 
-type MyState = ((RegNumber, LabelNumber, Loc, StringId), VarEnv, FunEnv, StringMap, Type)
+type MyState = ((RegNumber, LabelNumber, Loc, StringId), RegEnv, VarEnv, FunEnv, StringMap, Type)
 type Res a = StateT MyState IO a
 
 initialFuns :: FunEnv
 initialFuns = M.fromList [("printInt", (Void, [Int])), ("printString", (Void, [Str]))]
+
+initialRegs :: RegEnv
+initialRegs = M.empty
 
 initialEnv :: VarEnv
 initialEnv = M.empty
@@ -34,37 +38,46 @@ initialStringMap :: StringMap
 initialStringMap = M.empty
 
 emptyState :: MyState
-emptyState = ((0, 0, 0, 0), initialEnv, initialFuns, initialStringMap, Void)
+emptyState = ((0, 0, 0, 0), initialRegs, initialEnv, initialFuns, initialStringMap, Void)
 
 --
 --
 regFromId :: String -> Res String
 regFromId id = do
-        (counters, env, _, _, _) <- get
+        (counters, _, env, _, _, _) <- get
         let (typ, loc) = fromMaybe (error ("undefined variable: " ++ id)) $ M.lookup id env
-        return $ "%loc_" ++ show loc
+        let name = "%loc_" ++ show loc
+        (a, regs, b, c, d, e) <- get
+        put (a, M.insert (show loc) (typeToCode typ) regs, b, c, d, e)
+        return name
 
 typeFromId :: String -> Res Type
 typeFromId id = do
-        (_, env, _, _, _) <- get
+        (_, _, env, _, _, _) <- get
         let (typ, _) = fromMaybe (error ("undefined variable: " ++ id)) $ M.lookup id env
         return typ
 
-getFunTypeCode :: FunName -> Res String
-getFunTypeCode id = do
-        (_, _, funs, _, _) <- get
+getFunType :: FunName -> Res Type
+getFunType id = do
+        (_, _, _, funs, _, _) <- get
         let (typ, _) = fromMaybe (error $ "undefined function: " ++ id) $ M.lookup id funs
-        return $ typeToCode typ
+        return typ
 
 getFunArgTypes :: FunName -> Res [Type]
 getFunArgTypes id = do
-        (_, _, funs, _, _) <- get
+        (_, _, _, funs, _, _) <- get
         let (_, types) = fromMaybe (error $ "undefined function: " ++ id) $ M.lookup id funs
         return types
 
+getTypOfReg :: Hand -> Res String
+getTypOfReg hand = do
+        (_, regs, _, _, _, _) <- get
+        let typ = fromMaybe ("i32") $ M.lookup hand regs
+        return typ
+
 getCurrentType :: Res Type
 getCurrentType = do
-        (_, _, _, _, typ) <- get
+        (_, _, _, _, _, typ) <- get
         return typ
 
 typeToCode :: Type -> String
@@ -73,35 +86,54 @@ typeToCode Str = "i8*"
 typeToCode Bool = "i1"
 typeToCode Void = "void"
 
+genRegT :: String -> Res String
+genRegT typ = do
+        reg <- genReg
+        (a, regs, b, c, d, e) <- get
+        put (a, M.insert reg typ regs, b, c, d, e)
+        return reg
+
 genReg :: Res String
 genReg = do
-        ((nextRegNr, nextLabelNr, nextLoc, nextStrId), env, funs, strs, currTyp) <- get
+        ((nextRegNr, nextLabelNr, nextLoc, nextStrId), regs, env, funs, strs, currTyp) <- get
         let newReg = "%t" ++ show nextRegNr
-        put ((nextRegNr + 1, nextLabelNr, nextLoc, nextStrId), env, funs, strs, currTyp)
+        put ((nextRegNr + 1, nextLabelNr, nextLoc, nextStrId), regs, env, funs, strs, currTyp)
         return newReg
 
 genLabel :: Res String
 genLabel = do
-        ((nextRegNr, nextLabelNr, nextLoc, nextStrId), env, funs, strs, currTyp) <- get
+        ((nextRegNr, nextLabelNr, nextLoc, nextStrId), regs, env, funs, strs, currTyp) <- get
         let newLabel = "label" ++ show nextLabelNr
-        put ((nextRegNr, nextLabelNr + 1, nextLoc, nextStrId), env, funs, strs, currTyp)
+        put ((nextRegNr, nextLabelNr + 1, nextLoc, nextStrId), regs, env, funs, strs, currTyp)
         return newLabel
 
 labelToVar :: String -> String
 labelToVar label = "%" ++ label
 
+putStrToState :: String -> Res (String, Int)
+putStrToState str = do
+        ((nextRegNr, nextLabelNr, nextLoc, nextStrId), regs, env, funs, strs, currTyp) <- get
+        let strId = (case (M.lookup str strs) of
+                (Just id) -> id
+                (Nothing) -> nextStrId
+                       )
+        put ((nextRegNr, nextLabelNr, nextLoc, nextStrId+1), regs, env, funs, M.insert str strId strs, currTyp)
+        return $ ("@.str" ++ show strId, (length str) + 1)
+
+
 alloca :: String -> Type -> Res String
 alloca id typ = do
-        ((nextRegNr, nextLabelNr, nextLoc, nextStrId), env, funs, strs, currTyp) <- get
+        ((nextRegNr, nextLabelNr, nextLoc, nextStrId), regs, env, funs, strs, currTyp) <- get
         let reg = "%loc_" ++ show nextLoc
-        put ((nextRegNr, nextLabelNr, nextLoc + 1, nextStrId), (M.insert id (typ, nextLoc) env), funs, strs, currTyp)
+        put ((nextRegNr, nextLabelNr, nextLoc + 1, nextStrId), regs, (M.insert id (typ, nextLoc) env), funs, strs, currTyp)
         return $ reg ++ " = alloca " ++ typeToCode typ ++ "\n"
 
 declareBuiltInMethods :: String
 declareBuiltInMethods = 
-        printInt ++ printString ++ "\n" where
+        printInt ++ printString ++ strcat ++ "\n" where
                 printInt = "declare void @printInt(i32);\n"
                 printString = "declare void @printString(i8*);\n"
+                strcat = "declare i8* @__strcat_chk(i8*, i8*, i32)\n"
 
 artificialReturn :: Type -> Code
 artificialReturn typ = "ret " ++ typeToCode typ ++ (if typ /= Void then " 0" else "") ++ "\n"
@@ -133,6 +165,10 @@ registerArg (Arg typ (Ident id)) = do
 typFromArg :: Arg -> Type
 typFromArg (Arg typ _) = typ
 
+makeStrings :: StringMap -> Code
+makeStrings strs = concat $ map makeString $ M.toList strs where
+        makeString (string, id) = "@.str" ++ show id ++ " = private unnamed_addr constant [" ++ show ((length string) + 1) ++ " x i8] c\"" ++ string ++ "\\00\"\n"
+
 -- END OF HELPERS SECTION --
 --
 --
@@ -140,8 +176,9 @@ typFromArg (Arg typ _) = typ
 compile :: Program -> IO String
 compile program = do
         (program, state) <- runStateT (compileProgram program) emptyState
-        let (_, _, _, strings, _) = state
-        return $ declareBuiltInMethods ++ program ++ "\n@.str = private unnamed_addr constant [10 x i8] c\"jebac psy\\00\"\n"
+        let (_, _, _, _, stringMap, _) = state
+        let strings = makeStrings stringMap
+        return $ declareBuiltInMethods ++ program ++ strings
 
 compileProgram :: Program -> Res Code
 compileProgram (Program topDefs) = do
@@ -156,8 +193,8 @@ registerFuns (fun:rest) = do
 
 registerFun :: TopDef -> Res ()
 registerFun (FnDef typ (Ident id) args _) = do
-        (c, v, funs, strs, currTyp) <- get
-        put (c, v, M.insert id (typ, map typFromArg args) funs, strs, currTyp)
+        (c, r, v, funs, strs, currTyp) <- get
+        put (c, r, v, M.insert id (typ, map typFromArg args) funs, strs, currTyp)
         return ()
 
 compileP :: [TopDef] -> Res String
@@ -169,13 +206,14 @@ compileP (topDef:rest) = do
 
 cFunction :: TopDef -> Res String
 cFunction (FnDef typ (Ident id) args (Block stmts)) = do
-        (counters, _, funs, strs, _) <- get
-        put (counters, M.empty, funs, strs, typ)
+        (counters, regs, _, funs, strs, _) <- get
+        put (counters, regs, M.empty, funs, strs, typ)
         regArgs <- registerArgs args
         argsCode <- declareArgs args
         let argsCodePar = "(" ++ argsCode ++ ")"
         stmtsCode <- cStmts stmts
-        let blockCode = "{\n" ++ regArgs ++ stmtsCode ++ artificialReturn typ ++ "}"
+        let ret = if typ == Str then "" else artificialReturn typ
+        let blockCode = "{\n" ++ regArgs ++ stmtsCode ++ ret ++ "}"
         let typCode = typeToCode typ
         return $ "define " ++ typCode ++ " @" ++ id ++ argsCodePar ++ " " ++ blockCode ++ "\n\n"
 
@@ -186,8 +224,14 @@ declareItems typ (item:rest) = do
         restCode <- declareItems typ rest
         return $ itemCode ++ restCode
 
+defaultValue :: Type -> Expr
+defaultValue typ = case typ of
+                     Int -> ELitInt 0
+                     Bool -> ELitFalse
+                     Str -> EString ""
+
 declareItem :: Type -> Item -> Res String
-declareItem typ (NoInit ident) = declareItem typ (Init ident (ELitInt 0)) 
+declareItem typ (NoInit ident) = declareItem typ (Init ident $ defaultValue typ) 
 
 declareItem typ (Init (Ident id) exp) = do
         allocaCode <- alloca id typ
@@ -215,10 +259,10 @@ cStmt Empty = do
         return ""
 
 cStmt (BStmt (Block stmts)) = do
-        (_, oldEnv, funs, _, _) <- get
+        (_, _, oldEnv, funs, _, _) <- get
         res <- cStmts stmts
-        (newCounters, _, _, strs, typ) <- get
-        put (newCounters, oldEnv, funs, strs, typ)
+        (newCounters, newRegs, _, _, strs, typ) <- get
+        put (newCounters, newRegs, oldEnv, funs, strs, typ)
         return res
 
 cStmt (Decl typ items) = do
@@ -253,7 +297,7 @@ cStmt (CondElse exp stTrue stFalse) = do
         trueLabel <- genLabel
         falseLabel <- genLabel
         contLabel <- genLabel
-        ifReg <- genReg
+        ifReg <- genRegT $ typeToCode Bool
         let gotoCont = "br label %" ++ contLabel ++ "\n"
         let cmpCode = ifReg ++ " = icmp eq i1 " ++ hand ++ ", 1\n"
         let ifCode = "br i1 " ++ ifReg ++ ", label %" ++ trueLabel ++ ", label %" ++ falseLabel ++ "\n"
@@ -269,7 +313,7 @@ cStmt (While exp st) = do
         expLabel <- genLabel
         bodyLabel <- genLabel
         contLabel <- genLabel
-        condReg <- genReg
+        condReg <- genRegT $ typeToCode Bool
         let gotoExp = "br label %" ++ expLabel ++ "\n"
         let bodyPart = "\n" ++ bodyLabel ++ ":\n" ++ bodyCode ++ gotoExp
         let expPart = "\nbr label %" ++ expLabel ++ "\n" ++ expLabel ++ ":\n" ++ expCode
@@ -316,15 +360,31 @@ addOpToCode Minus = "sub"
 mulOpToCode :: MulOp -> String
 mulOpToCode Times = "mul"
 mulOpToCode Div = "sdiv"
-mulOpToCode Mod = "mod"
+mulOpToCode Mod = "srem"
+
 
 cOp :: Expr -> Expr -> Type -> String -> Res (Code, Hand)
 cOp exp1 exp2 typ op = do
         (expCode1, hand1) <- cExp exp1
         (expCode2, hand2) <- cExp exp2
-        reg <- genReg
-        return (expCode1 ++ expCode2 ++ reg ++ " = " ++ op ++ " " ++ typeToCode typ ++ " " ++ hand1 ++ ", " ++ hand2 ++ "\n", reg)
+        typCode <- getTypOfReg hand1
+        if head typCode == '[' || typCode == "i8*" then conStrs (expCode1 ++ expCode2) hand1 hand2 else do
+                reg <- genRegT $ typeToCode Int
+                return (expCode1 ++ expCode2 ++ reg ++ " = " ++ op ++ " " ++ typeToCode typ ++ " " ++ hand1 ++ ", " ++ hand2 ++ "\n", reg)
 
+conStrs :: Code -> Hand -> Hand -> Res (Code, Hand)
+conStrs begCode hand1 hand2 = do
+        let len = 80
+        let typ = "[" ++ (show len) ++ " x i8]"
+        reg <- genRegT typ
+        let alloca = reg ++ " = alloca " ++ typ ++ "\n"
+        wReg <- genRegT "i8*"
+        let beg = wReg ++ " = getelementptr " ++ typ ++ ", " ++ typ ++ "* " ++ reg ++ ", i32 0, i32 0\n"
+        fReg <- genRegT "i8*"
+        let first = fReg ++ " = call i8* @__strcat_chk(i8* " ++ wReg ++ ", i8* " ++ hand1 ++ ", i32 80)\n"
+        sReg <- genRegT "i8*"
+        let second = sReg ++ " = call i8* @__strcat_chk(i8* " ++ wReg ++ ", i8* " ++ hand2 ++ ", i32 80)\n"
+        return (begCode ++ alloca ++ beg ++ first ++ second, wReg)
 
 -- EXP
 --
@@ -335,13 +395,16 @@ cExp :: Expr -> Res (Code, Hand)
 cExp (EApp (Ident id) exps) = do
         argTypes <- getFunArgTypes id
         (argsCode, args) <- applyExps exps argTypes
-        typeCode <- getFunTypeCode id
-        return (argsCode ++ "call " ++ typeCode ++ " @" ++ id ++ "(" ++ args ++ ")\n", "0")
+        typ <- getFunType id
+        let typeCode = typeToCode typ
+        reg <- genRegT $ typeToCode typ
+        let beginning = if typeCode == "void" then "" else reg ++ " = "
+        return (argsCode ++ beginning ++ "call " ++ typeCode ++ " @" ++ id ++ "(" ++ args ++ ")\n", reg)
 
 cExp (EVar (Ident id)) = do
-        newReg <- genReg
-        locReg <- regFromId id
         typ <- typeFromId id
+        newReg <- genRegT $ typeToCode typ
+        locReg <- regFromId id
         let typCode = typeToCode typ
         let pointer = typCode ++ "*"
         return (newReg ++ " = load " ++ typCode ++ ", " ++ pointer ++ " " ++ locReg ++ "\n", newReg)
@@ -356,13 +419,15 @@ cExp (ELitInt int) = do
         return ("", show int)
 
 cExp (EString str) = do
-        reg <- genReg
-        let code = reg ++ " = getelementptr [10 x i8], [10 x i8]* @.str, i32 0, i32 0\n"
+        (strConst, len) <- putStrToState str
+        let typ = "[" ++ show len ++ " x i8]"
+        reg <- genRegT typ
+        let code = reg ++ " = getelementptr " ++ typ ++ ", " ++ typ ++ "* " ++ strConst ++ ", i32 0, i32 0\n"
         return (code, reg)
 
 cExp (Neg exp) = do
         (expCode, hand) <- cExp exp
-        reg <- genReg
+        reg <- genRegT $ typeToCode Int
         return (expCode ++ reg ++ " = sub i32 0, " ++ hand ++ "\n", reg)
 
 cExp (EMul exp1 op exp2) = cOp exp1 exp2 Int $ mulOpToCode op
@@ -373,12 +438,13 @@ cExp (EOr exp1 exp2) = cOp exp1 exp2 Bool "or"
 cExp (ERel exp1 op exp2) = do
         (expCode1, hand1) <- cExp exp1
         (expCode2, hand2) <- cExp exp2
-        reg <- genReg
-        return (expCode1 ++ expCode2 ++ reg ++ " = icmp " ++ relOpToCode op ++ " i32 " ++ hand1 ++ ", " ++ hand2 ++ "\n", reg)
+        reg <- genRegT $ typeToCode Bool
+        typ <- getTypOfReg hand1
+        return (expCode1 ++ expCode2 ++ reg ++ " = icmp " ++ relOpToCode op ++ " " ++ typ ++ " " ++ hand1 ++ ", " ++ hand2 ++ "\n", reg)
 
 cExp (Not exp) = do
         (expCode, hand) <- cExp exp
-        newReg <- genReg
+        newReg <- genRegT $ typeToCode Bool
         let code = newReg ++ " = xor i1 1, " ++ hand ++ "\n"
         return (expCode ++ code, newReg)
 

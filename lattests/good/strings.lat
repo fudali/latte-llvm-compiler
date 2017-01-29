@@ -1,6 +1,9 @@
 int main() {
-        string pies;
-        pies = "piesek hau hau";
-        printString(pies);
+        string pies = "pies hau";
+        string kot = "kot meow";
+        string c = pies + kot;
+        c = c + "1";
+        c = c + "2";
+        printString(c);
         return 0;
 }
