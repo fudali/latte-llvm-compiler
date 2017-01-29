@@ -1,0 +1,6 @@
+int main() {
+        string pies;
+        pies = "piesek hau hau";
+        printString(pies);
+        return 0;
+}

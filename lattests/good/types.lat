@@ -1,0 +1,13 @@
+int main() {
+  int i = 1;
+  i++;
+  boolean a = false;
+  a = !a;
+  if (a) {
+    printInt(1);
+  }
+  else {
+    printInt(0);
+  }
+  return 0;
+}
